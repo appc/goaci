@@ -1,9 +1,10 @@
 package main
 
-// TODO(jonboulle): use
-// TODO(jonboulle): support user-specified GOPATHs?
-// TODO(jonboulle): multiple executables?
-// TODO(jonboulle): add git sha label
+// TODO(jonboulle): at a bare minimum, allow user to specify arguments to exec
+// TODO(jonboulle): support user-specified GOPATHs/local packages. Right now we pull down a fresh copy of the specified package every time. This is better in terms of isolation and reproducibility, but inconvenient.
+// TODO(jonboulle): add git SHA as a label in the image manifest
+// TODO(jonboulle): support passing user-supplied arguments to `go get`? this might be tricky as we need to set a lot ourselves, and what if they conflict?
+// TODO(jonboulle): support multiple executables?
 
 import (
 	"archive/tar"
@@ -50,15 +51,18 @@ func main() {
 		Debug = true
 	}
 
-	// Set up a temporary directory for the build
-	gopath, err := ioutil.TempDir("", "goaci")
+	// Set up a temporary directory for everything (gopath and builds)
+	tmpdir, err := ioutil.TempDir("", "goaci")
 	if err != nil {
 		die("error setting up temporary directory: %v", err)
 	}
-	defer os.RemoveAll(gopath)
-	acidir := filepath.Join(gopath, "aci")
+	defer os.RemoveAll(tmpdir)
+
+	// Scratch build dir for aci
+	acidir := filepath.Join(tmpdir, "aci")
+
 	// Be explicit with gobin
-	gobin := filepath.Join(gopath, "bin")
+	gobin := filepath.Join(tmpdir, "bin")
 
 	// Find the go binary
 	gocmd, err := exec.LookPath("go")
@@ -76,10 +80,10 @@ func main() {
 	}
 
 	// Extract the package name (which is the last arg).
-	// Try to pass the other args on to `go get`
 	var ns string
 	for _, arg := range os.Args[1:] {
-		args = append(args, arg)
+		// TODO(jonboulle): try to pass the other args on to go get?
+		//		args = append(args, arg)
 		ns = arg
 	}
 
@@ -89,15 +93,17 @@ func main() {
 		die("bad app name: %v", err)
 	}
 
+	// Use the last component, e.g. example.com/my/app --> app
+	ofn := filepath.Base(ns) + ".aci"
 	mode := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	of, err := os.OpenFile(strip(ns), mode, 0644)
+	of, err := os.OpenFile(ofn, mode, 0644)
 	if err != nil {
 		die("error opening output file: %v", err)
 	}
 
 	cmd := exec.Cmd{
 		Env: []string{
-			"GOPATH=" + gopath,
+			"GOPATH=" + tmpdir,
 			"GOBIN=" + gobin,
 			"GOROOT=" + goroot,
 			"CGO_ENABLED=0",
@@ -177,20 +183,8 @@ func main() {
 	if err != nil {
 		die(err.Error())
 	}
+	fmt.Println("Wrote", of.Name())
 }
-
-/*
-type ImageManifest struct {
-	ACKind        types.ACKind       `json:"acKind"`
-	ACVersion     types.SemVer       `json:"acVersion"`
-	Name          types.ACName       `json:"name"`
-	Labels        types.Labels       `json:"labels,omitempty"`
-	App           *types.App         `json:"app,omitempty"`
-	Annotations   types.Annotations  `json:"annotations,omitempty"`
-	Dependencies  types.Dependencies `json:"dependencies,omitempty"`
-	PathWhitelist []string           `json:"pathWhitelist,omitempty"`
-}
-*/
 
 // strip replaces all characters that are not [a-Z_] with _
 func strip(in string) string {
