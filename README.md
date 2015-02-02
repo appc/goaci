@@ -1,12 +1,12 @@
 # goaci
 
-`goaci` is a command-line tool to build ACIs which confirm to the [app container specification][appc-spec].
+`goaci` is a simple command-line tool to build go projects into ACIs which confirm to the [app container specification][appc-spec].
 
 [appc-spec]: https://github.com/appc/spec
 
 ## Usage
 
-Use goaci as you would `go get` or `go install`:
+Use goaci as you would `go get`:
 
 	$ goaci github.com/coreos/etcd
 	Wrote etcd.aci
