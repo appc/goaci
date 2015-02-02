@@ -72,6 +72,7 @@ func main() {
 	}
 
 	// Construct args for a go get that does a static build
+	// TODO(jonboulle): go version 1.4
 	args := []string{
 		gocmd,
 		"get",
