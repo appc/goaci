@@ -1,6 +1,7 @@
 package main
 
 // TODO(jonboulle): at a bare minimum, allow user to specify arguments to exec
+// TODO(jonboulle): allow user to add assets to the ACI
 // TODO(jonboulle): support user-specified GOPATHs/local packages. Right now we pull down a fresh copy of the specified package every time. This is better in terms of isolation and reproducibility, but inconvenient.
 // TODO(jonboulle): add git SHA as a label in the image manifest
 // TODO(jonboulle): support passing user-supplied arguments to `go get`? this might be tricky as we need to set a lot ourselves, and what if they conflict?

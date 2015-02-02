@@ -17,3 +17,7 @@ Use goaci as you would `go get`:
 
 `goaci` creates a temporary directory and uses it as a `GOPATH`; it then `go get`s the specified package and compiles it statically.
 Then it generates a very basic image manifest (using mostly default values, configurables coming soon) and leverages the [appc/spec](https://github.com/appc/spec) libraries to construct an ACI.
+
+## TODO
+
+Lots, check out the top of [goaci.go](goaci.go)
