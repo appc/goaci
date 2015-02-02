@@ -11,6 +11,7 @@ Use goaci as you would `go get` or `go install`:
 	$ goaci github.com/coreos/etcd
 	Wrote etcd.aci
 	$ actool -debug validate etcd.aci
+	etcd.aci: valid app container image
 
 ## How it works
 
