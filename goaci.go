@@ -102,6 +102,7 @@ func main() {
 	if err != nil {
 		die("bad app name: %v", err)
 	}
+	args = append(args, ns)
 
 	// Use the last component, e.g. example.com/my/app --> app
 	ofn := filepath.Base(ns) + ".aci"
