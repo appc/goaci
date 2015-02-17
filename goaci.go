@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -31,7 +32,21 @@ func debug(i ...interface{}) {
 	}
 }
 
+type StringVector []string
+
+func (v *StringVector) String() string {
+	return `"` + strings.Join(*v, `" "`) + `"`
+}
+
+func (v *StringVector) Set(str string) error {
+	*v = append(*v, str)
+	return nil
+}
+
 func main() {
+	var execOpts StringVector
+	flag.Var(&execOpts, "exec", "Parameters passed to app, can be used multiple times")
+	flag.Parse()
 	if os.Getenv("GOPATH") != "" {
 		die("to avoid confusion GOPATH must not be set")
 	}
@@ -145,15 +160,15 @@ func main() {
 	}
 	debug("moved binary to:", ep)
 
+	exec := []string{filepath.Join("/", fn)}
+	exec = append(exec, execOpts...)
 	// Build the ACI
 	im := schema.ImageManifest{
 		ACKind:    types.ACKind("ImageManifest"),
 		ACVersion: schema.AppContainerVersion,
 		Name:      *name,
 		App: &types.App{
-			Exec: types.Exec{
-				filepath.Join("/", fn),
-			},
+			Exec:  exec,
 			User:  "0",
 			Group: "0",
 		},
