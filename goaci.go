@@ -52,6 +52,7 @@ func main() {
 		execOpts            StringVector
 		goDefaultBinaryDesc string
 		goBinaryOpt         string
+		goPathOpt           string
 	)
 
 	// Find the go binary
@@ -64,9 +65,10 @@ func main() {
 		goDefaultBinaryDesc = "Go binary to use (default: whatever go in $PATH)"
 	}
 	flag.StringVar(&goBinaryOpt, "go-binary", gocmd, goDefaultBinaryDesc)
+	flag.StringVar(&goPathOpt, "go-path", "", "Custom GOPATH (default: a temporary directory)")
 	flag.Parse()
 	if os.Getenv("GOPATH") != "" {
-		warn("GOPATH envvar is ignored")
+		warn("GOPATH envvar is ignored, use --go-path=\"$GOPATH\" option instead")
 	}
 	if os.Getenv("GOROOT") != "" {
 		warn("GOROOT envvar is ignored, use --go-binary=\"$GOROOT/bin/go\" option instead")
@@ -85,11 +87,14 @@ func main() {
 		die("error setting up temporary directory: %v", err)
 	}
 	defer os.RemoveAll(tmpdir)
+	if goPathOpt == "" {
+		goPathOpt = tmpdir
+	}
 
 	// Scratch build dir for aci
 	acidir := filepath.Join(tmpdir, "aci")
 
-	// Be explicit with gobin
+	// Let's put final binary in tmpdir
 	gobin := filepath.Join(tmpdir, "bin")
 
 	// Construct args for a go get that does a static build
@@ -128,7 +133,7 @@ func main() {
 
 	cmd := exec.Cmd{
 		Env: []string{
-			"GOPATH=" + tmpdir,
+			"GOPATH=" + goPathOpt,
 			"GOBIN=" + gobin,
 			"CGO_ENABLED=0",
 			"PATH=" + os.Getenv("PATH"),
