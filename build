@@ -1,6 +1,6 @@
 #!/bin/bash -eu
 
-ORG_PATH="github.com/jonboulle"
+ORG_PATH="github.com/appc"
 REPO_PATH="${ORG_PATH}/goaci"
 
 if [ ! -h gopath/src/${REPO_PATH} ]; then

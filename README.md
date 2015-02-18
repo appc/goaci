@@ -20,4 +20,4 @@ Then it generates a very basic image manifest (using mostly default values, conf
 
 ## TODO
 
-Lots, check out the top of [goaci.go](goaci.go)
+Lots, check out https://github.com/appc/goaci/issues
