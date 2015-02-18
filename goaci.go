@@ -19,9 +19,13 @@ import (
 
 var Debug bool
 
-func die(s string, i ...interface{}) {
+func warn(s string, i ...interface{}) {
 	s = fmt.Sprintf(s, i...)
 	fmt.Fprintln(os.Stderr, strings.TrimSuffix(s, "\n"))
+}
+
+func die(s string, i ...interface{}) {
+	warn(s, i...)
 	os.Exit(1)
 }
 
@@ -62,10 +66,10 @@ func main() {
 	flag.StringVar(&goBinaryOpt, "go-binary", gocmd, goDefaultBinaryDesc)
 	flag.Parse()
 	if os.Getenv("GOPATH") != "" {
-		die("to avoid confusion GOPATH must not be set")
+		warn("GOPATH envvar is ignored")
 	}
 	if os.Getenv("GOROOT") != "" {
-		die("to avoid confusion GOROOT must not be set, use --go-binary=\"$GOROOT/bin/go\" option instead")
+		warn("GOROOT envvar is ignored, use --go-binary=\"$GOROOT/bin/go\" option instead")
 	}
 	if os.Getenv("GOACI_DEBUG") != "" {
 		Debug = true
