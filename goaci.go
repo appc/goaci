@@ -44,18 +44,35 @@ func (v *StringVector) Set(str string) error {
 }
 
 func main() {
-	var execOpts StringVector
+	var (
+		execOpts            StringVector
+		goDefaultBinaryDesc string
+		goBinaryOpt         string
+	)
+
+	// Find the go binary
+	gocmd, err := exec.LookPath("go")
+
 	flag.Var(&execOpts, "exec", "Parameters passed to app, can be used multiple times")
+	if err != nil {
+		goDefaultBinaryDesc = "Go binary to use (default: none found in $PATH, so it must be provided)"
+	} else {
+		goDefaultBinaryDesc = "Go binary to use (default: whatever go in $PATH)"
+	}
+	flag.StringVar(&goBinaryOpt, "go-binary", gocmd, goDefaultBinaryDesc)
 	flag.Parse()
 	if os.Getenv("GOPATH") != "" {
 		die("to avoid confusion GOPATH must not be set")
 	}
-	goroot := os.Getenv("GOROOT")
-	if goroot == "" {
-		die("GOROOT must be set")
+	if os.Getenv("GOROOT") != "" {
+		die("to avoid confusion GOROOT must not be set, use --go-binary=\"$GOROOT/bin/go\" option instead")
 	}
 	if os.Getenv("GOACI_DEBUG") != "" {
 		Debug = true
+	}
+
+	if goBinaryOpt == "" {
+		die("go binary not found")
 	}
 
 	// Set up a temporary directory for everything (gopath and builds)
@@ -71,15 +88,9 @@ func main() {
 	// Be explicit with gobin
 	gobin := filepath.Join(tmpdir, "bin")
 
-	// Find the go binary
-	gocmd, err := exec.LookPath("go")
-	if err != nil {
-		die("could not find `go` in path")
-	}
-
 	// Construct args for a go get that does a static build
 	args := []string{
-		gocmd,
+		goBinaryOpt,
 		"get",
 		"-a",
 		"-tags", "netgo",
@@ -115,11 +126,10 @@ func main() {
 		Env: []string{
 			"GOPATH=" + tmpdir,
 			"GOBIN=" + gobin,
-			"GOROOT=" + goroot,
 			"CGO_ENABLED=0",
 			"PATH=" + os.Getenv("PATH"),
 		},
-		Path:   gocmd,
+		Path:   goBinaryOpt,
 		Args:   args,
 		Stderr: os.Stderr,
 		Stdout: os.Stdout,
