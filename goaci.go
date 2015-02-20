@@ -68,10 +68,11 @@ func main() {
 	flag.StringVar(&goPathOpt, "go-path", "", "Custom GOPATH (default: a temporary directory)")
 	flag.Parse()
 	if os.Getenv("GOPATH") != "" {
-		warn("GOPATH envvar is ignored, use --go-path=\"$GOPATH\" option instead")
+		warn("GOPATH env var is ignored, use --go-path=\"$GOPATH\" option instead")
 	}
-	if os.Getenv("GOROOT") != "" {
-		warn("GOROOT envvar is ignored, use --go-binary=\"$GOROOT/bin/go\" option instead")
+	goRoot := os.Getenv("GOROOT")
+	if goRoot != "" {
+		warn("Overriding GOROOT env var to %s", goRoot)
 	}
 	if os.Getenv("GOACI_DEBUG") != "" {
 		Debug = true
@@ -131,13 +132,17 @@ func main() {
 		die("error opening output file: %v", err)
 	}
 
+	env := []string{
+		"GOPATH=" + goPathOpt,
+		"GOBIN=" + gobin,
+		"CGO_ENABLED=0",
+		"PATH=" + os.Getenv("PATH"),
+	}
+	if goRoot != "" {
+		env = append(env, "GOROOT="+goRoot)
+	}
 	cmd := exec.Cmd{
-		Env: []string{
-			"GOPATH=" + goPathOpt,
-			"GOBIN=" + gobin,
-			"CGO_ENABLED=0",
-			"PATH=" + os.Getenv("PATH"),
-		},
+		Env:    env,
 		Path:   goBinaryOpt,
 		Args:   args,
 		Stderr: os.Stderr,
