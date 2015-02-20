@@ -47,26 +47,42 @@ func (v *StringVector) Set(str string) error {
 	return nil
 }
 
-func main() {
-	var (
-		execOpts            StringVector
-		goDefaultBinaryDesc string
-		goBinaryOpt         string
-		goPathOpt           string
-	)
+type options struct {
+	exec      StringVector
+	goBinary  string
+	goPath    string
+}
 
-	// Find the go binary
+func getOptions() *options {
+	opts := &options{}
+
+	// --go-binary
+	goDefaultBinaryDesc := "Go binary to use"
 	gocmd, err := exec.LookPath("go")
-
-	flag.Var(&execOpts, "exec", "Parameters passed to app, can be used multiple times")
 	if err != nil {
-		goDefaultBinaryDesc = "Go binary to use (default: none found in $PATH, so it must be provided)"
+		goDefaultBinaryDesc += " (default: none found in $PATH, so it must be provided)"
 	} else {
-		goDefaultBinaryDesc = "Go binary to use (default: whatever go in $PATH)"
+		goDefaultBinaryDesc += " (default: whatever go in $PATH)"
 	}
-	flag.StringVar(&goBinaryOpt, "go-binary", gocmd, goDefaultBinaryDesc)
-	flag.StringVar(&goPathOpt, "go-path", "", "Custom GOPATH (default: a temporary directory)")
+	flag.StringVar(&opts.goBinary, "go-binary", gocmd, goDefaultBinaryDesc)
+
+	// --exec
+	flag.Var(&opts.exec, "exec", "Parameters passed to app, can be used multiple times")
+
+	// --go-path
+	flag.StringVar(&opts.goPath, "go-path", "", "Custom GOPATH (default: a temporary directory)")
+
 	flag.Parse()
+
+	if opts.goBinary == "" {
+		die("go binary not found")
+	}
+
+	return opts
+}
+
+func main() {
+	opts := getOptions()
 	if os.Getenv("GOPATH") != "" {
 		warn("GOPATH env var is ignored, use --go-path=\"$GOPATH\" option instead")
 	}
@@ -78,18 +94,15 @@ func main() {
 		Debug = true
 	}
 
-	if goBinaryOpt == "" {
-		die("go binary not found")
-	}
-
 	// Set up a temporary directory for everything (gopath and builds)
 	tmpdir, err := ioutil.TempDir("", "goaci")
 	if err != nil {
 		die("error setting up temporary directory: %v", err)
 	}
 	defer os.RemoveAll(tmpdir)
-	if goPathOpt == "" {
-		goPathOpt = tmpdir
+	goPath := opts.goPath
+	if goPath == "" {
+		goPath = tmpdir
 	}
 
 	// Scratch build dir for aci
@@ -100,7 +113,7 @@ func main() {
 
 	// Construct args for a go get that does a static build
 	args := []string{
-		goBinaryOpt,
+		opts.goBinary,
 		"get",
 		"-a",
 		"-tags", "netgo",
@@ -133,7 +146,7 @@ func main() {
 	}
 
 	env := []string{
-		"GOPATH=" + goPathOpt,
+		"GOPATH=" + goPath,
 		"GOBIN=" + gobin,
 		"CGO_ENABLED=0",
 		"PATH=" + os.Getenv("PATH"),
@@ -143,7 +156,7 @@ func main() {
 	}
 	cmd := exec.Cmd{
 		Env:    env,
-		Path:   goBinaryOpt,
+		Path:   opts.goBinary,
 		Args:   args,
 		Stderr: os.Stderr,
 		Stdout: os.Stdout,
@@ -185,7 +198,7 @@ func main() {
 	debug("moved binary to:", ep)
 
 	exec := []string{filepath.Join("/", fn)}
-	exec = append(exec, execOpts...)
+	exec = append(exec, opts.exec...)
 	// Build the ACI
 	im := schema.ImageManifest{
 		ACKind:    types.ACKind("ImageManifest"),
