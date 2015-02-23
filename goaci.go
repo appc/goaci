@@ -51,6 +51,7 @@ type options struct {
 	exec      StringVector
 	goBinary  string
 	goPath    string
+	useBinary string
 }
 
 func getOptions() *options {
@@ -72,6 +73,8 @@ func getOptions() *options {
 	// --go-path
 	flag.StringVar(&opts.goPath, "go-path", "", "Custom GOPATH (default: a temporary directory)")
 
+	// --use-binary
+	flag.StringVar(&opts.useBinary, "use-binary", "", "Which executable to put in ACI image")
 	flag.Parse()
 
 	if opts.goBinary == "" {
@@ -130,15 +133,28 @@ func main() {
 		ns = arg
 	}
 
-	name, err := types.NewACName(ns)
+	// Use the last sensible component, e.g. example.com/my/app --> app
+	// or example.com/my/app/... -> app
+	// When using --use-binary=bin option, append binary name -> app-bin
+	fullPkgName := ns
+	base := filepath.Base(ns)
+	if base == "..." {
+		fullPkgName = filepath.Dir(ns)
+		base = filepath.Base(fullPkgName)
+	}
+	if opts.useBinary != "" {
+		suffix := "-" + opts.useBinary
+		base += suffix
+		fullPkgName += suffix
+	}
+
+	name, err := types.NewACName(fullPkgName)
 	// TODO(jonboulle): could this ever actually happen?
 	if err != nil {
 		die("bad app name: %v", err)
 	}
 	args = append(args, ns)
-
-	// Use the last component, e.g. example.com/my/app --> app
-	ofn := filepath.Base(ns) + ".aci"
+	ofn := base + ".aci"
 	mode := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
 	of, err := os.OpenFile(ofn, mode, 0644)
 	if err != nil {
@@ -172,14 +188,34 @@ func main() {
 	if err != nil {
 		die(err.Error())
 	}
+	var fn string
 	switch {
 	case len(fi) < 1:
-		die("no binaries found in gobin")
+		die("No binaries found in gobin.")
+	case len(fi) == 1:
+		name := fi[0].Name()
+		if opts.useBinary != "" && name != opts.useBinary {
+			die("No such binary found in gobin: %s. There is only %s", opts.useBinary, name)
+		}
+		fn = name
 	case len(fi) > 1:
-		debug(fmt.Sprint(fi))
-		die("can't handle multiple binaries")
+		names := []string{}
+		for _, v := range fi {
+			names = append(names, v.Name())
+		}
+		if opts.useBinary == "" {
+			die("Found multiple binaries in gobin, but --use-binary option is not used. Please specify which binary to put in ACI. Following binaries are available: %s", strings.Join(names, ", "))
+		}
+		for _, v := range names {
+			if v == opts.useBinary {
+				fn = v
+				break
+			}
+		}
+		if fn == "" {
+			die("No such binary found in gobin: %s. There are following binaries available: %s", opts.useBinary, strings.Join(names, ", "))
+		}
 	}
-	fn := fi[0].Name()
 	debug("found binary: ", fn)
 
 	// Set up rootfs for ACI layout
