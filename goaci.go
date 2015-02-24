@@ -221,9 +221,11 @@ func main() {
 	// or example.com/my/app/... -> app
 	// When using --use-binary=bin option, append binary name -> app-bin
 	fullPkgName := ns
+	projPath := fullPkgName
 	base := filepath.Base(ns)
 	if base == "..." {
 		fullPkgName = filepath.Dir(ns)
+		projPath = fullPkgName
 		base = filepath.Base(fullPkgName)
 	}
 	if opts.useBinary != "" {
@@ -353,6 +355,22 @@ func main() {
 
 	exec := []string{filepath.Join("/", fn)}
 	exec = append(exec, opts.exec...)
+
+	var labels types.Labels = nil
+	if name, value, err := GetVCSInfo(goPath, projPath); err == nil {
+		if acname, err := types.NewACName(name); err == nil {
+			label := types.Label{
+				Name:  *acname,
+				Value: value,
+			}
+			labels = append(labels, label)
+		} else {
+			debug("invalid label:", err)
+		}
+	} else {
+		debug("error getting vcs info:", err)
+	}
+
 	// Build the ACI
 	im := schema.ImageManifest{
 		ACKind:    types.ACKind("ImageManifest"),
@@ -363,6 +381,7 @@ func main() {
 			User:  "0",
 			Group: "0",
 		},
+		Labels: labels,
 	}
 	debug(im)
 
