@@ -55,6 +55,7 @@ type options struct {
 	goPath    string
 	useBinary string
 	assets    StringVector
+	keepTmp   bool
 }
 
 var pathListSep string
@@ -98,6 +99,8 @@ func getOptions() *options {
 	// --asset
 	flag.Var(&opts.assets, "asset", "Additional assets, can be used multiple times. Format: <path in ACI>"+listSeparator()+"<local path>")
 
+	// --keep-tmp
+	flag.BoolVar(&opts.keepTmp, "keep-tmp", false, "Do not delete temporary directory used for creating ACI")
 	flag.Parse()
 
 	if opts.goBinary == "" {
@@ -179,7 +182,11 @@ func main() {
 	if err != nil {
 		die("error setting up temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tmpdir)
+	if opts.keepTmp {
+		fmt.Println("Preserving temporary directory", tmpdir)
+	} else {
+		defer os.RemoveAll(tmpdir)
+	}
 	goPath := opts.goPath
 	if goPath == "" {
 		goPath = tmpdir
