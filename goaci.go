@@ -11,31 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/appc/spec/aci"
 	"github.com/appc/spec/schema"
 	"github.com/appc/spec/schema/types"
 )
-
-var Debug bool
-
-func warn(s string, i ...interface{}) {
-	s = fmt.Sprintf(s, i...)
-	fmt.Fprintln(os.Stderr, strings.TrimSuffix(s, "\n"))
-}
-
-func die(s string, i ...interface{}) {
-	warn(s, i...)
-	os.Exit(1)
-}
-
-func debug(i ...interface{}) {
-	if Debug {
-		s := fmt.Sprint(i...)
-		fmt.Fprintln(os.Stderr, strings.TrimSuffix(s, "\n"))
-	}
-}
 
 type StringVector []string
 
@@ -55,22 +35,6 @@ type options struct {
 	useBinary string
 	assets    StringVector
 	keepTmp   bool
-}
-
-var pathListSep string
-
-func listSeparator() string {
-	if pathListSep == "" {
-		len := utf8.RuneLen(filepath.ListSeparator)
-		if len < 0 {
-			die("list separator is not valid utf8?!")
-		}
-		buf := make([]byte, len)
-		len = utf8.EncodeRune(buf, filepath.ListSeparator)
-		pathListSep = string(buf[:len])
-	}
-
-	return pathListSep
 }
 
 func getOptions() *options {
@@ -118,10 +82,7 @@ func main() {
 	if goRoot != "" {
 		warn("Overriding GOROOT env var to %s", goRoot)
 	}
-	if os.Getenv("GOACI_DEBUG") != "" {
-		Debug = true
-	}
-
+	initDebug()
 	// Set up a temporary directory for everything (gopath and builds)
 	tmpdir, err := ioutil.TempDir("", "goaci")
 	if err != nil {
