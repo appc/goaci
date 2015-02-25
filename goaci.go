@@ -96,7 +96,7 @@ func getOptions() *options {
 	flag.StringVar(&opts.useBinary, "use-binary", "", "Which executable to put in ACI image")
 
 	// --asset
-	flag.Var(&opts.assets, "asset", "Additional assets, can be used multiple times. Format: <path in ACI>"+listSeparator()+"<local path>")
+	flag.Var(&opts.assets, "asset", "Additional assets, can be used multiple times; format: <path in ACI>"+listSeparator()+"<local path>; placeholders like <GOPATH> and <PROJPATH> can be used there as well")
 
 	// --keep-tmp
 	flag.BoolVar(&opts.keepTmp, "keep-tmp", false, "Do not delete temporary directory used for creating ACI")
@@ -264,7 +264,11 @@ func main() {
 	}
 	debug("moved binary to:", ep)
 
-	if err := PrepareAssets(opts.assets, rfs); err != nil {
+	paths := map[string]string{
+		"<PROJPATH>": filepath.Join(goPath, "src", projPath),
+		"<GOPATH>":  goPath,
+	}
+	if err := PrepareAssets(opts.assets, rfs, paths); err != nil {
 		die("%v", err)
 	}
 
