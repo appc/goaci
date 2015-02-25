@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func copyTree(src, dest string) error {
+func copyTree(src, dest, imageAssetDir string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -35,22 +35,33 @@ func copyTree(src, dest string) error {
 				return err
 			}
 		case mode&os.ModeSymlink == os.ModeSymlink:
-			// TODO(krnowak): preserve absolute paths of symlinks
 			symTarget, err := os.Readlink(path)
 			if err != nil {
 				return err
 			}
+			absolute := true
 			if !filepath.IsAbs(symTarget) {
+				absolute = false
 				dirPart := filepath.Dir(path)
 				testPath := filepath.Join(dirPart, symTarget)
 				symTarget = filepath.Clean(testPath)
 			}
 			if strings.HasPrefix(symTarget, src) {
-				relTarget, err := filepath.Rel(filepath.Dir(path), symTarget)
+				var err error;
+				linkTarget := ""
+				if absolute {
+					linkTarget, err = filepath.Rel(src, symTarget)
+					if err == nil {
+						linkTarget = filepath.Join(imageAssetDir, linkTarget)
+						linkTarget = filepath.Clean(linkTarget)
+					}
+				} else {
+					linkTarget, err = filepath.Rel(filepath.Dir(path), symTarget)
+				}
 				if err != nil {
 					return err
 				}
-				if err := os.Symlink(relTarget, target); err != nil {
+				if err := os.Symlink(linkTarget, target); err != nil {
 					return err
 				}
 			} else {
@@ -85,13 +96,12 @@ func PrepareAssets(assets []string, rootfs string) error {
 			return fmt.Errorf("Error stating %v: %v", localAsset, err)
 		}
 		if fi.Mode().IsDir() || fi.Mode().IsRegular() {
-			ACIBase := filepath.Base(ACIAsset)
 			ACIAssetSubPath := filepath.Join(rootfs, filepath.Dir(ACIAsset))
 			err := os.MkdirAll(ACIAssetSubPath, 0755)
 			if err != nil {
 				return fmt.Errorf("Failed to create directory tree for asset '%v': %v", asset, err)
 			}
-			err = copyTree(localAsset, filepath.Join(ACIAssetSubPath, ACIBase))
+			err = copyTree(localAsset, filepath.Join(rootfs, ACIAsset), ACIAsset)
 			if err != nil {
 				return fmt.Errorf("Failed to copy assets for '%v': %v", asset, err)
 			}
