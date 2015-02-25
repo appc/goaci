@@ -35,6 +35,7 @@ type options struct {
 	useBinary string
 	assets    StringVector
 	keepTmp   bool
+	project   string
 }
 
 func getOptions() *options {
@@ -66,6 +67,11 @@ func getOptions() *options {
 	flag.BoolVar(&opts.keepTmp, "keep-tmp", false, "Do not delete temporary directory used for creating ACI")
 	flag.Parse()
 
+	args := flag.Args()
+	if len(args) != 1 {
+		die("Expected exactly one project to build, got %d", len(args))
+	}
+	opts.project = args[0]
 	if opts.goBinary == "" {
 		die("go binary not found")
 	}
@@ -115,13 +121,7 @@ func main() {
 		"-installsuffix", "cgo",
 	}
 
-	// Extract the package name (which is the last arg).
-	var ns string
-	for _, arg := range os.Args[1:] {
-		// TODO(jonboulle): try to pass the other args on to go get?
-		//		args = append(args, arg)
-		ns = arg
-	}
+	ns := opts.project
 
 	// Use the last sensible component, e.g. example.com/my/app --> app
 	// or example.com/my/app/... -> app
