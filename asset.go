@@ -1,12 +1,71 @@
 package main
 
 import (
-	"path/filepath"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
+
+func copyRegularFile(src, dest string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		return err
+	}
+	return nil
+}
+
+func makeAbsoluteTarget(base, target string) string {
+	dirPart := filepath.Dir(base)
+	testPath := filepath.Join(dirPart, target)
+	return filepath.Clean(testPath)
+}
+
+func absoluteSrcTargetToDest(srcBase, srcTarget, destBase string) (string, error) {
+	relTarget, err := filepath.Rel(srcBase, srcTarget)
+	if err != nil {
+		return "", err
+	}
+	destTarget := filepath.Join(destBase, relTarget)
+	return filepath.Clean(destTarget), nil
+}
+
+func copySymlink(src, dest, imageAssetDir, root string) error {
+	symTarget, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+	absolute := filepath.IsAbs(symTarget)
+	if !absolute {
+		symTarget = makeAbsoluteTarget(src, symTarget)
+	}
+	if strings.HasPrefix(symTarget, root) {
+		var err error
+		linkTarget := ""
+		if absolute {
+			linkTarget, err = absoluteSrcTargetToDest(root, symTarget, imageAssetDir)
+		} else {
+			linkTarget, err = filepath.Rel(filepath.Dir(src), symTarget)
+		}
+		if err != nil {
+			return err
+		}
+		if err := os.Symlink(linkTarget, dest); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("Symlink %s points to %s, which is outside asset %s", src, symTarget, root)
+	}
+	return nil
+}
 
 func copyTree(src, dest, imageAssetDir string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
@@ -23,49 +82,12 @@ func copyTree(src, dest, imageAssetDir string) error {
 				return err
 			}
 		case mode.IsRegular():
-			srcFile, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			destFile, err := os.Create(target)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(destFile, srcFile); err != nil {
+			if err := copyRegularFile(path, target); err != nil {
 				return err
 			}
 		case mode&os.ModeSymlink == os.ModeSymlink:
-			symTarget, err := os.Readlink(path)
-			if err != nil {
+			if err := copySymlink(path, target, imageAssetDir, src); err != nil {
 				return err
-			}
-			absolute := true
-			if !filepath.IsAbs(symTarget) {
-				absolute = false
-				dirPart := filepath.Dir(path)
-				testPath := filepath.Join(dirPart, symTarget)
-				symTarget = filepath.Clean(testPath)
-			}
-			if strings.HasPrefix(symTarget, src) {
-				var err error;
-				linkTarget := ""
-				if absolute {
-					linkTarget, err = filepath.Rel(src, symTarget)
-					if err == nil {
-						linkTarget = filepath.Join(imageAssetDir, linkTarget)
-						linkTarget = filepath.Clean(linkTarget)
-					}
-				} else {
-					linkTarget, err = filepath.Rel(filepath.Dir(path), symTarget)
-				}
-				if err != nil {
-					return err
-				}
-				if err := os.Symlink(linkTarget, target); err != nil {
-					return err
-				}
-			} else {
-				return fmt.Errorf("Symlink %s points to %s, which is outside asset %s", path, symTarget, src)
 			}
 		default:
 			return fmt.Errorf("Unsupported node (%s) in assets, only regular files, directories and symlinks pointing to node inside asset are supported.", path, mode.String())
@@ -84,6 +106,23 @@ func replacePlaceholders(path string, paths map[string]string) string {
 	return newPath
 }
 
+func validateAsset(ACIAsset, localAsset string) error {
+	if !filepath.IsAbs(ACIAsset) {
+		return fmt.Errorf("Wrong ACI asset: '%v' - ACI asset has to be absolute path", ACIAsset)
+	}
+	if !filepath.IsAbs(localAsset) {
+		return fmt.Errorf("Wrong local asset: '%v' - local asset has to be absolute path", localAsset)
+	}
+	fi, err := os.Stat(localAsset)
+	if err != nil {
+		return fmt.Errorf("Error stating %v: %v", localAsset, err)
+	}
+	if fi.Mode().IsDir() || fi.Mode().IsRegular() {
+		return nil
+	}
+	return fmt.Errorf("Can't handle local asset %v - not a file, not a dir", fi.Name())
+}
+
 func PrepareAssets(assets []string, rootfs string, paths map[string]string) error {
 	for _, asset := range assets {
 		splitAsset := filepath.SplitList(asset)
@@ -92,28 +131,17 @@ func PrepareAssets(assets []string, rootfs string, paths map[string]string) erro
 		}
 		ACIAsset := replacePlaceholders(splitAsset[0], paths)
 		localAsset := replacePlaceholders(splitAsset[1], paths)
-		if !filepath.IsAbs(ACIAsset) {
-			return fmt.Errorf("Malformed asset option: '%v' - ACI asset has to be absolute path", asset)
+		if err := validateAsset(ACIAsset, localAsset); err != nil {
+			return err
 		}
-		if !filepath.IsAbs(localAsset) {
-			return fmt.Errorf("Malformed asset option: '%v' - local asset has to be absolute path", asset)
-		}
-		fi, err := os.Stat(localAsset)
+		ACIAssetSubPath := filepath.Join(rootfs, filepath.Dir(ACIAsset))
+		err := os.MkdirAll(ACIAssetSubPath, 0755)
 		if err != nil {
-			return fmt.Errorf("Error stating %v: %v", localAsset, err)
+			return fmt.Errorf("Failed to create directory tree for asset '%v': %v", asset, err)
 		}
-		if fi.Mode().IsDir() || fi.Mode().IsRegular() {
-			ACIAssetSubPath := filepath.Join(rootfs, filepath.Dir(ACIAsset))
-			err := os.MkdirAll(ACIAssetSubPath, 0755)
-			if err != nil {
-				return fmt.Errorf("Failed to create directory tree for asset '%v': %v", asset, err)
-			}
-			err = copyTree(localAsset, filepath.Join(rootfs, ACIAsset), ACIAsset)
-			if err != nil {
-				return fmt.Errorf("Failed to copy assets for '%v': %v", asset, err)
-			}
-		} else {
-			return fmt.Errorf("Can't handle %v - not a file, not a dir", fi.Name())
+		err = copyTree(localAsset, filepath.Join(rootfs, ACIAsset), ACIAsset)
+		if err != nil {
+			return fmt.Errorf("Failed to copy assets for '%v': %v", asset, err)
 		}
 	}
 	return nil
