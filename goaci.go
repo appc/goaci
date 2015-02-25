@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"flag"
 	"fmt"
@@ -38,7 +37,7 @@ type options struct {
 	project   string
 }
 
-func getOptions() *options {
+func getOptions() (*options, error) {
 	opts := &options{}
 
 	// --go-binary
@@ -61,7 +60,7 @@ func getOptions() *options {
 	flag.StringVar(&opts.useBinary, "use-binary", "", "Which executable to put in ACI image")
 
 	// --asset
-	flag.Var(&opts.assets, "asset", "Additional assets, can be used multiple times; format: <path in ACI>"+listSeparator()+"<local path>; placeholders like <GOPATH> and <PROJPATH> can be used there as well")
+	flag.Var(&opts.assets, "asset", "Additional assets, can be used multiple times; format: <path in ACI>"+ListSeparator()+"<local path>; placeholders like <GOPATH> and <PROJPATH> can be used there as well")
 
 	// --keep-tmp
 	flag.BoolVar(&opts.keepTmp, "keep-tmp", false, "Do not delete temporary directory used for creating ACI")
@@ -69,233 +68,344 @@ func getOptions() *options {
 
 	args := flag.Args()
 	if len(args) != 1 {
-		die("Expected exactly one project to build, got %d", len(args))
+		return nil, fmt.Errorf("Expected exactly one project to build, got %d", len(args))
 	}
 	opts.project = args[0]
 	if opts.goBinary == "" {
-		die("go binary not found")
+		return nil, fmt.Errorf("Go binary not found")
 	}
 
-	return opts
+	return opts, nil
 }
 
-func main() {
-	opts := getOptions()
+type pathsAndNames struct {
+	tmpDirPath  string
+	goPath      string
+	goRootPath  string
+	projectPath string
+	fakeGoPath  string
+	goBinPath   string
+	aciDirPath  string
+	rootFSPath  string
+	goExecPath  string
+
+	imageFileName string
+	imageACName   string
+}
+
+func getGoPath(opts *options, tmpDir string) (string, string) {
+	fakeGoPath := filepath.Join(tmpDir, "gopath")
+	if opts.goPath == "" {
+		return fakeGoPath, fakeGoPath
+	}
+	return opts.goPath, fakeGoPath
+}
+
+func getNamesFromProject(opts *options) (string, string, string) {
+	imageACName := opts.project
+	projectName := imageACName
+	base := filepath.Base(imageACName)
+	threeDotsBase := base == "..."
+	if threeDotsBase {
+		imageACName = filepath.Dir(imageACName)
+		projectName = imageACName
+		base = filepath.Base(imageACName)
+		if opts.useBinary != "" {
+			suffix := "-" + opts.useBinary
+			base += suffix
+			imageACName += suffix
+		}
+	}
+
+	return projectName, imageACName, base + schema.ACIExtension
+}
+
+func getPathsAndNames(opts *options) (*pathsAndNames, error) {
+	tmpDir, err := ioutil.TempDir("", "goaci")
+	if err != nil {
+		return nil, fmt.Errorf("error setting up temporary directory: %v", err)
+	}
+
+	goPath, fakeGoPath := getGoPath(opts, tmpDir)
+	projectName, imageACName, imageFileName := getNamesFromProject(opts)
+
 	if os.Getenv("GOPATH") != "" {
-		warn("GOPATH env var is ignored, use --go-path=\"$GOPATH\" option instead")
+		Warn("GOPATH env var is ignored, use --go-path=\"$GOPATH\" option instead")
 	}
 	goRoot := os.Getenv("GOROOT")
 	if goRoot != "" {
-		warn("Overriding GOROOT env var to %s", goRoot)
-	}
-	initDebug()
-	// Set up a temporary directory for everything (gopath and builds)
-	tmpdir, err := ioutil.TempDir("", "goaci")
-	if err != nil {
-		die("error setting up temporary directory: %v", err)
-	}
-	if opts.keepTmp {
-		fmt.Println("Preserving temporary directory", tmpdir)
-	} else {
-		defer os.RemoveAll(tmpdir)
-	}
-	goPath := opts.goPath
-	if goPath == "" {
-		goPath = tmpdir
+		Warn("Overriding GOROOT env var to ", goRoot)
 	}
 
-	// Scratch build dir for aci
-	acidir := filepath.Join(tmpdir, "aci")
+	aciDir := filepath.Join(tmpDir, "aci")
+	// Project name is path-like string with slashes, but slash is
+	// not a file separator on every OS.
+	projectPath := filepath.Join(goPath, "src", filepath.Join(strings.Split(projectName, "/")...))
 
-	// Let's put final binary in tmpdir
-	gobin := filepath.Join(tmpdir, "bin")
+	return &pathsAndNames{
+		tmpDirPath:  tmpDir, // /tmp/XXX
+		goPath:      goPath,
+		goRootPath:  goRoot,
+		projectPath: projectPath,
+		fakeGoPath:  fakeGoPath,                       // /tmp/XXX/gopath
+		goBinPath:   filepath.Join(fakeGoPath, "bin"), // /tmp/XXX/gopath/bin
+		aciDirPath:  aciDir,                           // /tmp/XXX/aci
+		rootFSPath:  filepath.Join(aciDir, "rootfs"),  // /tmp/XXX/aci/rootfs
+		goExecPath:  opts.goBinary,
 
+		imageFileName: imageFileName,
+		imageACName:   imageACName,
+	}, nil
+}
+
+func makeDirectories(pathsNames *pathsAndNames) error {
+	// /tmp/XXX already exists, not creating it here
+
+	// /tmp/XXX/gopath
+	if err := os.Mkdir(pathsNames.fakeGoPath, 0755); err != nil {
+		return err
+	}
+
+	// /tmp/XXX/gopath/bin
+	if err := os.Mkdir(pathsNames.goBinPath, 0755); err != nil {
+		return err
+	}
+
+	// /tmp/XXX/aci
+	if err := os.Mkdir(pathsNames.aciDirPath, 0755); err != nil {
+		return err
+	}
+
+	// /tmp/XXX/aci/rootfs
+	if err := os.Mkdir(pathsNames.rootFSPath, 0755); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func runGoGet(opts *options, pathsNames *pathsAndNames) error {
 	// Construct args for a go get that does a static build
 	args := []string{
-		opts.goBinary,
+		pathsNames.goExecPath,
 		"get",
 		"-a",
 		"-tags", "netgo",
 		"-ldflags", "'-w'",
-		// 1.4
-		"-installsuffix", "cgo",
-	}
-
-	ns := opts.project
-
-	// Use the last sensible component, e.g. example.com/my/app --> app
-	// or example.com/my/app/... -> app
-	// When using --use-binary=bin option, append binary name -> app-bin
-	fullPkgName := ns
-	projPath := fullPkgName
-	base := filepath.Base(ns)
-	if base == "..." {
-		fullPkgName = filepath.Dir(ns)
-		projPath = fullPkgName
-		base = filepath.Base(fullPkgName)
-	}
-	if opts.useBinary != "" {
-		suffix := "-" + opts.useBinary
-		base += suffix
-		fullPkgName += suffix
-	}
-
-	name, err := types.NewACName(fullPkgName)
-	// TODO(jonboulle): could this ever actually happen?
-	if err != nil {
-		die("bad app name: %v", err)
-	}
-	args = append(args, ns)
-	ofn := base + ".aci"
-	mode := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	of, err := os.OpenFile(ofn, mode, 0644)
-	if err != nil {
-		die("error opening output file: %v", err)
+		"-installsuffix", "nocgo", // for 1.4
+		opts.project,
 	}
 
 	env := []string{
-		"GOPATH=" + goPath,
-		"GOBIN=" + gobin,
+		"GOPATH=" + pathsNames.goPath,
+		"GOBIN=" + pathsNames.goBinPath,
 		"CGO_ENABLED=0",
 		"PATH=" + os.Getenv("PATH"),
 	}
-	if goRoot != "" {
-		env = append(env, "GOROOT="+goRoot)
+	if pathsNames.goRootPath != "" {
+		env = append(env, "GOROOT="+pathsNames.goRootPath)
 	}
+
 	cmd := exec.Cmd{
 		Env:    env,
-		Path:   opts.goBinary,
+		Path:   pathsNames.goExecPath,
 		Args:   args,
 		Stderr: os.Stderr,
 		Stdout: os.Stdout,
 	}
-	debug("env:", cmd.Env)
-	debug("running command:", strings.Join(cmd.Args, " "))
+	Debug("env: ", cmd.Env)
+	Debug("running command: ", strings.Join(cmd.Args, " "))
 	if err := cmd.Run(); err != nil {
-		die("error running go: %v", err)
+		return err
+	}
+	return nil
+}
+
+func getBinaryName(opts *options, pathsNames *pathsAndNames) (string, error) {
+	fi, err := ioutil.ReadDir(pathsNames.goBinPath)
+	if err != nil {
+		return "", err
 	}
 
-	// Check that we got 1 binary from the go get command
-	fi, err := ioutil.ReadDir(gobin)
-	if err != nil {
-		die(err.Error())
-	}
-	var fn string
 	switch {
 	case len(fi) < 1:
-		die("No binaries found in gobin.")
+		return "", fmt.Errorf("No binaries found in gobin.")
 	case len(fi) == 1:
 		name := fi[0].Name()
 		if opts.useBinary != "" && name != opts.useBinary {
-			die("No such binary found in gobin: %s. There is only %s", opts.useBinary, name)
+			return "", fmt.Errorf("No such binary found in gobin: %s. There is only %s", opts.useBinary, name)
 		}
-		fn = name
+		Debug("found binary: ", name)
+		return name, nil
 	case len(fi) > 1:
 		names := []string{}
 		for _, v := range fi {
 			names = append(names, v.Name())
 		}
 		if opts.useBinary == "" {
-			die("Found multiple binaries in gobin, but --use-binary option is not used. Please specify which binary to put in ACI. Following binaries are available: %s", strings.Join(names, ", "))
+			return "", fmt.Errorf("Found multiple binaries in gobin, but --use-binary option is not used. Please specify which binary to put in ACI. Following binaries are available: %s", strings.Join(names, ", "))
 		}
 		for _, v := range names {
 			if v == opts.useBinary {
-				fn = v
-				break
+				return v, nil
 			}
 		}
-		if fn == "" {
-			die("No such binary found in gobin: %s. There are following binaries available: %s", opts.useBinary, strings.Join(names, ", "))
-		}
+		return "", fmt.Errorf("No such binary found in gobin: %s. There are following binaries available: %s", opts.useBinary, strings.Join(names, ", "))
 	}
-	debug("found binary: ", fn)
-
-	// Set up rootfs for ACI layout
-	rfs := filepath.Join(acidir, "rootfs")
-	err = os.MkdirAll(rfs, 0755)
-	if err != nil {
-		die(err.Error())
-	}
-
-	// Move the binary into the rootfs
-	ep := filepath.Join(rfs, fn)
-	err = os.Rename(filepath.Join(gobin, fn), ep)
-	if err != nil {
-		die(err.Error())
-	}
-	debug("moved binary to:", ep)
-
-	paths := map[string]string{
-		"<PROJPATH>": filepath.Join(goPath, "src", projPath),
-		"<GOPATH>":  goPath,
-	}
-	if err := PrepareAssets(opts.assets, rfs, paths); err != nil {
-		die("%v", err)
-	}
-
-	exec := []string{filepath.Join("/", fn)}
-	exec = append(exec, opts.exec...)
-
-	var labels types.Labels = nil
-	if name, value, err := GetVCSInfo(goPath, projPath); err == nil {
-		if acname, err := types.NewACName(name); err == nil {
-			label := types.Label{
-				Name:  *acname,
-				Value: value,
-			}
-			labels = append(labels, label)
-		} else {
-			debug("invalid label:", err)
-		}
-	} else {
-		debug("error getting vcs info:", err)
-	}
-
-	// Build the ACI
-	im := schema.ImageManifest{
-		ACKind:    types.ACKind("ImageManifest"),
-		ACVersion: schema.AppContainerVersion,
-		Name:      *name,
-		App: &types.App{
-			Exec:  exec,
-			User:  "0",
-			Group: "0",
-		},
-		Labels: labels,
-	}
-	debug(im)
-
-	gw := gzip.NewWriter(of)
-	tr := tar.NewWriter(gw)
-
-	defer func() {
-		tr.Close()
-		gw.Close()
-		of.Close()
-	}()
-
-	iw := aci.NewImageWriter(im, tr)
-	err = filepath.Walk(acidir, aci.BuildWalker(acidir, iw))
-	if err != nil {
-		die(err.Error())
-	}
-	err = iw.Close()
-	if err != nil {
-		die(err.Error())
-	}
-	fmt.Println("Wrote", of.Name())
+	return "", fmt.Errorf("Reaching this point shouldn't be possible.")
 }
 
-// strip replaces all characters that are not [a-Z_] with _
-func strip(in string) string {
-	out := bytes.Buffer{}
-	for _, c := range in {
-		if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTVWXYZ0123456789_", c) {
-			c = '_'
-		}
-		if _, err := out.WriteRune(c); err != nil {
-			panic(err)
-		}
+func getApp(opts *options, binary string) *types.App {
+	exec := []string{filepath.Join("/", binary)}
+	exec = append(exec, opts.exec...)
+
+	return &types.App{
+		Exec:  exec,
+		User:  "0",
+		Group: "0",
 	}
-	return out.String()
+}
+
+func getVCSLabel(pathsNames *pathsAndNames) (*types.Label, error) {
+	name, value, err := GetVCSInfo(pathsNames.projectPath)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get VCS info: %v", err)
+	}
+	acname, err := types.NewACName(name)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid VCS label: %v", err)
+	}
+	return &types.Label{
+		Name:  *acname,
+		Value: value,
+	}, nil
+}
+
+func prepareManifest(opts *options, pathsNames *pathsAndNames, binary string) (*schema.ImageManifest, error) {
+	name, err := types.NewACName(pathsNames.imageACName)
+	// TODO(jonboulle): could this ever actually happen?
+	if err != nil {
+		return nil, err
+	}
+
+	app := getApp(opts, binary)
+
+	vcsLabel, err := getVCSLabel(pathsNames)
+	if err != nil {
+		return nil, err
+	}
+	labels := types.Labels{
+		*vcsLabel,
+	}
+
+	manifest := schema.BlankImageManifest()
+	manifest.Name = *name
+	manifest.App = app
+	manifest.Labels = labels
+	return manifest, nil
+}
+
+func copyAssets(opts *options, pathsNames *pathsAndNames) error {
+	paths := map[string]string{
+		"<PROJPATH>": pathsNames.projectPath,
+		"<GOPATH>":   pathsNames.goPath,
+	}
+	if err := PrepareAssets(opts.assets, pathsNames.rootFSPath, paths); err != nil {
+		return err
+	}
+	return nil
+}
+
+func moveBinaryToRootFS(pathsNames *pathsAndNames, binary string) error {
+	// Move the binary into the rootfs
+	ep := filepath.Join(pathsNames.rootFSPath, binary)
+	if err := os.Rename(filepath.Join(pathsNames.goBinPath, binary), ep); err != nil {
+		return err
+	}
+	Debug("moved binary to: ", ep)
+	return nil
+}
+
+func writeACI(pathsNames *pathsAndNames, manifest *schema.ImageManifest) error {
+	mode := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	of, err := os.OpenFile(pathsNames.imageFileName, mode, 0644)
+	if err != nil {
+		return fmt.Errorf("Error opening output file: %v", err)
+	}
+	defer of.Close()
+
+	gw := gzip.NewWriter(of)
+	defer gw.Close()
+
+	tr := tar.NewWriter(gw)
+	defer tr.Close()
+
+	iw := aci.NewImageWriter(*manifest, tr)
+	if err := filepath.Walk(pathsNames.aciDirPath, aci.BuildWalker(pathsNames.aciDirPath, iw)); err != nil {
+		return err
+	}
+	if err := iw.Close(); err != nil {
+		return err
+	}
+	Info("Wrote ", of.Name())
+	return nil
+}
+
+func mainWithError() error {
+	InitDebug()
+
+	opts, err := getOptions()
+	if err != nil {
+		return err
+	}
+
+	pathsNames, err := getPathsAndNames(opts)
+	if err != nil {
+		return err
+	}
+
+	if opts.keepTmp {
+		Info("Preserving temporary directory ", pathsNames.tmpDirPath)
+	} else {
+		defer os.RemoveAll(pathsNames.tmpDirPath)
+	}
+
+	if err := makeDirectories(pathsNames); err != nil {
+		return err
+	}
+
+	if err := runGoGet(opts, pathsNames); err != nil {
+		return err
+	}
+
+	binary, err := getBinaryName(opts, pathsNames)
+	if err != nil {
+		return err
+	}
+
+	manifest, err := prepareManifest(opts, pathsNames, binary)
+	if err != nil {
+		return err
+	}
+
+	if err := copyAssets(opts, pathsNames); err != nil {
+		return err
+	}
+
+	if err := moveBinaryToRootFS(pathsNames, binary); err != nil {
+		return err
+	}
+
+	if err := writeACI(pathsNames, manifest); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	if err := mainWithError(); err != nil {
+		Warn(err)
+		os.Exit(1)
+	}
 }

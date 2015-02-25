@@ -99,14 +99,13 @@ func (info BzrInfo) GetLabelAndId(path string) (string, string, error) {
 	return getLabelAndId("bzr", path, "bzr", []string{"revno"})
 }
 
-func GetVCSInfo(gopath, project string) (string, string, error) {
+func GetVCSInfo(projPath string) (string, string, error) {
 	vcses := []VCSInfo{
 		GitInfo{},
 		HgInfo{},
 		SvnInfo{},
 		BzrInfo{},
 	}
-	projPath := filepath.Join(gopath, "src", project)
 
 	for _, vcs := range vcses {
 		if vcs.IsValid(projPath) {

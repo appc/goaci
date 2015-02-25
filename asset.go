@@ -97,12 +97,12 @@ func copyTree(src, dest, imageAssetDir string) error {
 }
 
 func replacePlaceholders(path string, paths map[string]string) string {
-	fmt.Printf("Processing path: %s\n", path)
+	Debug("Processing path: ", path)
 	newPath := path
 	for placeholder, replacement := range paths {
 		newPath = strings.Replace(newPath, placeholder, replacement, -1)
 	}
-	fmt.Printf("Processed path: %s\n", newPath)
+	Debug("Processed path: ", newPath)
 	return newPath
 }
 
@@ -127,7 +127,7 @@ func PrepareAssets(assets []string, rootfs string, paths map[string]string) erro
 	for _, asset := range assets {
 		splitAsset := filepath.SplitList(asset)
 		if len(splitAsset) != 2 {
-			return fmt.Errorf("Malformed asset option: '%v' - expected two absolute paths separated with %v", asset, listSeparator())
+			return fmt.Errorf("Malformed asset option: '%v' - expected two absolute paths separated with %v", asset, ListSeparator())
 		}
 		ACIAsset := replacePlaceholders(splitAsset[0], paths)
 		localAsset := replacePlaceholders(splitAsset[1], paths)
