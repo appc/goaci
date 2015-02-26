@@ -37,6 +37,7 @@ func InitDebug() {
 	}
 }
 
+// ListSeparator returns filepath.ListSeparator rune as a string.
 func ListSeparator() string {
 	if pathListSep == "" {
 		len := utf8.RuneLen(filepath.ListSeparator)

@@ -23,12 +23,28 @@ func copyRegularFile(src, dest string) error {
 	return nil
 }
 
+// makeAbsoluteTarget takes a absolute path which will serve as a base
+// and a relative symlink target to create absolute equivalent of
+// relative target.
 func makeAbsoluteTarget(base, target string) string {
 	dirPart := filepath.Dir(base)
 	testPath := filepath.Join(dirPart, target)
 	return filepath.Clean(testPath)
 }
 
+// absoluteSrcTargetToDest returns an absolute symlink target pointing
+// to an asset on ACI image, which is a counterpart of an absolute
+// symlink target pointing to an asset on local filesystem.
+//
+// Example:
+//
+// Given an asset /assets:$HOME/some/assets and a symlink somewhere
+// inside local asset which points to another place in local asset
+// like:
+// $HOME/some/assets/some/symlink -> $HOME/some/assets/some/target
+// This function returns target /assets/some/target. In this case
+// srcBase is $HOME/some/assets, srcTarget is
+// $HOME/some/assets/some/target and destBase is /assets.
 func absoluteSrcTargetToDest(srcBase, srcTarget, destBase string) (string, error) {
 	relTarget, err := filepath.Rel(srcBase, srcTarget)
 	if err != nil {
@@ -38,6 +54,15 @@ func absoluteSrcTargetToDest(srcBase, srcTarget, destBase string) (string, error
 	return filepath.Clean(destTarget), nil
 }
 
+// copySymlink copies the symlink, but before doing so it ensures that
+// the symlink is pointing to node inside the asset.
+//
+// Example:
+//
+// Given are local asset $HOME/some/asset and a symlink inside in
+// $HOME/some/asset/some/symlink. If the symlink points to for example
+// to $HOME/foo or to ../../../bar then the symlink is pointing
+// outside the asset and we don't support them.
 func copySymlink(src, dest, imageAssetDir, root string) error {
 	symTarget, err := os.Readlink(src)
 	if err != nil {

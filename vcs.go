@@ -18,6 +18,8 @@ func repoDirExists(projPath, repoDir string) bool {
 	return info.IsDir()
 }
 
+// getId gets first line of commands output which should hold some VCS
+// specific id of current code checkout.
 func getId(dir, cmd string, params []string) (string, error) {
 	args := []string{cmd}
 	args = append(args, params...)

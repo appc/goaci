@@ -93,6 +93,9 @@ type pathsAndNames struct {
 	imageACName   string
 }
 
+// getGoPath returns go path and fake go path. The former is either in
+// /tmp (which is a default) or some other path as specified by
+// --go-path parameter. The latter is always in /tmp.
 func getGoPath(opts *options, tmpDir string) (string, string) {
 	fakeGoPath := filepath.Join(tmpDir, "gopath")
 	if opts.goPath == "" {
@@ -101,6 +104,14 @@ func getGoPath(opts *options, tmpDir string) (string, string) {
 	return opts.goPath, fakeGoPath
 }
 
+// getNamesFromProject returns project name, image ACName and ACI
+// filename. Names depend on whether project has several binaries. For
+// project with single binary (github.com/appc/goaci) returned values
+// would be: github.com/appc/goaci, github.com/appc/goaci and
+// goaci.aci. For project with multiple binaries
+// (github.com/appc/spec/...) returned values would be (assuming ace
+// as selected binary): github.com/appc/spec, github.com/appc/spec-ace
+// and spec-ace.aci.
 func getNamesFromProject(opts *options) (string, string, string) {
 	imageACName := opts.project
 	projectName := imageACName
@@ -221,6 +232,8 @@ func runGoGet(opts *options, pathsNames *pathsAndNames) error {
 	return nil
 }
 
+// getBinaryName get a binary name built by go get and selected by
+// --use-binary parameter.
 func getBinaryName(opts *options, pathsNames *pathsAndNames) (string, error) {
 	fi, err := ioutil.ReadDir(pathsNames.goBinPath)
 	if err != nil {
