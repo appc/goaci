@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -18,9 +19,13 @@ import (
 
 var Debug bool
 
-func die(s string, i ...interface{}) {
+func warn(s string, i ...interface{}) {
 	s = fmt.Sprintf(s, i...)
 	fmt.Fprintln(os.Stderr, strings.TrimSuffix(s, "\n"))
+}
+
+func die(s string, i ...interface{}) {
+	warn(s, i...)
 	os.Exit(1)
 }
 
@@ -31,16 +36,50 @@ func debug(i ...interface{}) {
 	}
 }
 
+type StringVector []string
+
+func (v *StringVector) String() string {
+	return `"` + strings.Join(*v, `" "`) + `"`
+}
+
+func (v *StringVector) Set(str string) error {
+	*v = append(*v, str)
+	return nil
+}
+
 func main() {
-	if os.Getenv("GOPATH") != "" {
-		die("to avoid confusion GOPATH must not be set")
+	var (
+		execOpts            StringVector
+		goDefaultBinaryDesc string
+		goBinaryOpt         string
+		goPathOpt           string
+	)
+
+	// Find the go binary
+	gocmd, err := exec.LookPath("go")
+
+	flag.Var(&execOpts, "exec", "Parameters passed to app, can be used multiple times")
+	if err != nil {
+		goDefaultBinaryDesc = "Go binary to use (default: none found in $PATH, so it must be provided)"
+	} else {
+		goDefaultBinaryDesc = "Go binary to use (default: whatever go in $PATH)"
 	}
-	goroot := os.Getenv("GOROOT")
-	if goroot == "" {
-		die("GOROOT must be set")
+	flag.StringVar(&goBinaryOpt, "go-binary", gocmd, goDefaultBinaryDesc)
+	flag.StringVar(&goPathOpt, "go-path", "", "Custom GOPATH (default: a temporary directory)")
+	flag.Parse()
+	if os.Getenv("GOPATH") != "" {
+		warn("GOPATH env var is ignored, use --go-path=\"$GOPATH\" option instead")
+	}
+	goRoot := os.Getenv("GOROOT")
+	if goRoot != "" {
+		warn("Overriding GOROOT env var to %s", goRoot)
 	}
 	if os.Getenv("GOACI_DEBUG") != "" {
 		Debug = true
+	}
+
+	if goBinaryOpt == "" {
+		die("go binary not found")
 	}
 
 	// Set up a temporary directory for everything (gopath and builds)
@@ -49,23 +88,19 @@ func main() {
 		die("error setting up temporary directory: %v", err)
 	}
 	defer os.RemoveAll(tmpdir)
+	if goPathOpt == "" {
+		goPathOpt = tmpdir
+	}
 
 	// Scratch build dir for aci
 	acidir := filepath.Join(tmpdir, "aci")
 
-	// Be explicit with gobin
+	// Let's put final binary in tmpdir
 	gobin := filepath.Join(tmpdir, "bin")
 
-	// Find the go binary
-	gocmd, err := exec.LookPath("go")
-	if err != nil {
-		die("could not find `go` in path")
-	}
-
 	// Construct args for a go get that does a static build
-	// TODO(jonboulle): go version 1.4
 	args := []string{
-		gocmd,
+		goBinaryOpt,
 		"get",
 		"-a",
 		"-tags", "netgo",
@@ -87,6 +122,7 @@ func main() {
 	if err != nil {
 		die("bad app name: %v", err)
 	}
+	args = append(args, ns)
 
 	// Use the last component, e.g. example.com/my/app --> app
 	ofn := filepath.Base(ns) + ".aci"
@@ -96,15 +132,18 @@ func main() {
 		die("error opening output file: %v", err)
 	}
 
+	env := []string{
+		"GOPATH=" + goPathOpt,
+		"GOBIN=" + gobin,
+		"CGO_ENABLED=0",
+		"PATH=" + os.Getenv("PATH"),
+	}
+	if goRoot != "" {
+		env = append(env, "GOROOT="+goRoot)
+	}
 	cmd := exec.Cmd{
-		Env: []string{
-			"GOPATH=" + tmpdir,
-			"GOBIN=" + gobin,
-			"GOROOT=" + goroot,
-			"CGO_ENABLED=0",
-			"PATH=" + os.Getenv("PATH"),
-		},
-		Path:   gocmd,
+		Env:    env,
+		Path:   goBinaryOpt,
 		Args:   args,
 		Stderr: os.Stderr,
 		Stdout: os.Stdout,
@@ -145,15 +184,15 @@ func main() {
 	}
 	debug("moved binary to:", ep)
 
+	exec := []string{filepath.Join("/", fn)}
+	exec = append(exec, execOpts...)
 	// Build the ACI
 	im := schema.ImageManifest{
 		ACKind:    types.ACKind("ImageManifest"),
 		ACVersion: schema.AppContainerVersion,
 		Name:      *name,
 		App: &types.App{
-			Exec: types.Exec{
-				filepath.Join("/", fn),
-			},
+			Exec:  exec,
 			User:  "0",
 			Group: "0",
 		},
