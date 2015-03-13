@@ -57,7 +57,7 @@ func copyTree(src, dest string) error {
 				return err
 			}
 		default:
-			return fmt.Errorf("Unsupported node (%s) in assets, only regular files, directories and symlinks are supported.", path, mode.String())
+			return fmt.Errorf("Unsupported node %q in assets, only regular files, directories and symlinks are supported.", path, mode.String())
 		}
 		return nil
 	})

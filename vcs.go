@@ -114,5 +114,5 @@ func GetVCSInfo(projPath string) (string, string, error) {
 			return vcs.GetLabelAndId(projPath)
 		}
 	}
-	return "", "", fmt.Errorf("Unknown code repository in %s", projPath)
+	return "", "", fmt.Errorf("Unknown code repository in %q", projPath)
 }
