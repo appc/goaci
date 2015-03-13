@@ -13,10 +13,12 @@ func copyRegularFile(src, dest string) error {
 	if err != nil {
 		return err
 	}
+	defer srcFile.Close()
 	destFile, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
+	defer destFile.Close()
 	if _, err := io.Copy(destFile, srcFile); err != nil {
 		return err
 	}
