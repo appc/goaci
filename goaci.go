@@ -256,14 +256,14 @@ func getBinaryName(opts *options, pathsNames *pathsAndNames) (string, error) {
 			names = append(names, v.Name())
 		}
 		if opts.useBinary == "" {
-			return "", fmt.Errorf("Found multiple binaries in gobin, but --use-binary option is not used. Please specify which binary to put in ACI. Following binaries are available: \"%s\"", strings.Join(names, `", "`))
+			return "", fmt.Errorf("Found multiple binaries in gobin, but --use-binary option is not used. Please specify which binary to put in ACI. Following binaries are available: %q", strings.Join(names, `", "`))
 		}
 		for _, v := range names {
 			if v == opts.useBinary {
 				return v, nil
 			}
 		}
-		return "", fmt.Errorf("No such binary found in gobin: %q. There are following binaries available: \"%s\"", opts.useBinary, strings.Join(names, `", "`))
+		return "", fmt.Errorf("No such binary found in gobin: %q. There are following binaries available: %q", opts.useBinary, strings.Join(names, `", "`))
 	}
 	return "", fmt.Errorf("Reaching this point shouldn't be possible.")
 }
