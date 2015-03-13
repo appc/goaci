@@ -353,6 +353,9 @@ func writeACI(pathsNames *pathsAndNames, manifest *schema.ImageManifest) error {
 	tr := tar.NewWriter(gw)
 	defer tr.Close()
 
+	// FIXME: the files in the tar archive are added with the
+	// wrong uid/gid. The uid/gid of the aci builder leaks in the
+	// tar archive. See: #16
 	iw := aci.NewImageWriter(*manifest, tr)
 	if err := filepath.Walk(pathsNames.aciDirPath, aci.BuildWalker(pathsNames.aciDirPath, iw)); err != nil {
 		return err
