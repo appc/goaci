@@ -23,76 +23,18 @@ func copyRegularFile(src, dest string) error {
 	return nil
 }
 
-// makeAbsoluteTarget takes a absolute path which will serve as a base
-// and a relative symlink target to create absolute equivalent of
-// relative target.
-func makeAbsoluteTarget(base, target string) string {
-	dirPart := filepath.Dir(base)
-	testPath := filepath.Join(dirPart, target)
-	return filepath.Clean(testPath)
-}
-
-// absoluteSrcTargetToDest returns an absolute symlink target pointing
-// to an asset on ACI image, which is a counterpart of an absolute
-// symlink target pointing to an asset on local filesystem.
-//
-// Example:
-//
-// Given an asset /assets:$HOME/some/assets and a symlink somewhere
-// inside local asset which points to another place in local asset
-// like:
-// $HOME/some/assets/some/symlink -> $HOME/some/assets/some/target
-// This function returns target /assets/some/target. In this case
-// srcBase is $HOME/some/assets, srcTarget is
-// $HOME/some/assets/some/target and destBase is /assets.
-func absoluteSrcTargetToDest(srcBase, srcTarget, destBase string) (string, error) {
-	relTarget, err := filepath.Rel(srcBase, srcTarget)
-	if err != nil {
-		return "", err
-	}
-	destTarget := filepath.Join(destBase, relTarget)
-	return filepath.Clean(destTarget), nil
-}
-
-// copySymlink copies the symlink, but before doing so it ensures that
-// the symlink is pointing to node inside the asset.
-//
-// Example:
-//
-// Given are local asset $HOME/some/asset and a symlink inside in
-// $HOME/some/asset/some/symlink. If the symlink points to for example
-// to $HOME/foo or to ../../../bar then the symlink is pointing
-// outside the asset and we don't support them.
-func copySymlink(src, dest, imageAssetDir, root string) error {
+func copySymlink(src, dest string) error {
 	symTarget, err := os.Readlink(src)
 	if err != nil {
 		return err
 	}
-	absolute := filepath.IsAbs(symTarget)
-	if !absolute {
-		symTarget = makeAbsoluteTarget(src, symTarget)
-	}
-	if strings.HasPrefix(symTarget, root) {
-		var err error
-		linkTarget := ""
-		if absolute {
-			linkTarget, err = absoluteSrcTargetToDest(root, symTarget, imageAssetDir)
-		} else {
-			linkTarget, err = filepath.Rel(filepath.Dir(src), symTarget)
-		}
-		if err != nil {
-			return err
-		}
-		if err := os.Symlink(linkTarget, dest); err != nil {
-			return err
-		}
-	} else {
-		return fmt.Errorf("Symlink %s points to %s, which is outside asset %s", src, symTarget, root)
+	if err := os.Symlink(symTarget, dest); err != nil {
+		return err
 	}
 	return nil
 }
 
-func copyTree(src, dest, imageAssetDir string) error {
+func copyTree(src, dest string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -111,11 +53,11 @@ func copyTree(src, dest, imageAssetDir string) error {
 				return err
 			}
 		case mode&os.ModeSymlink == os.ModeSymlink:
-			if err := copySymlink(path, target, imageAssetDir, src); err != nil {
+			if err := copySymlink(path, target); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("Unsupported node (%s) in assets, only regular files, directories and symlinks pointing to node inside asset are supported.", path, mode.String())
+			return fmt.Errorf("Unsupported node (%s) in assets, only regular files, directories and symlinks are supported.", path, mode.String())
 		}
 		return nil
 	})
@@ -164,7 +106,7 @@ func PrepareAssets(assets []string, rootfs string, paths map[string]string) erro
 		if err != nil {
 			return fmt.Errorf("Failed to create directory tree for asset '%v': %v", asset, err)
 		}
-		err = copyTree(localAsset, filepath.Join(rootfs, ACIAsset), ACIAsset)
+		err = copyTree(localAsset, filepath.Join(rootfs, ACIAsset))
 		if err != nil {
 			return fmt.Errorf("Failed to copy assets for '%v': %v", asset, err)
 		}
