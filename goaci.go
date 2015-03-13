@@ -319,11 +319,11 @@ func prepareManifest(opts *options, pathsNames *pathsAndNames, binary string) (*
 }
 
 func copyAssets(opts *options, pathsNames *pathsAndNames) error {
-	paths := map[string]string{
+	placeholderMapping := map[string]string{
 		"<PROJPATH>": pathsNames.projectPath,
 		"<GOPATH>":   pathsNames.goPath,
 	}
-	if err := PrepareAssets(opts.assets, pathsNames.rootFSPath, paths); err != nil {
+	if err := PrepareAssets(opts.assets, pathsNames.rootFSPath, placeholderMapping); err != nil {
 		return err
 	}
 	return nil

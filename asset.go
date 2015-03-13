@@ -65,10 +65,10 @@ func copyTree(src, dest string) error {
 	})
 }
 
-func replacePlaceholders(path string, paths map[string]string) string {
+func replacePlaceholders(path string, placeholderMapping map[string]string) string {
 	Debug("Processing path: ", path)
 	newPath := path
-	for placeholder, replacement := range paths {
+	for placeholder, replacement := range placeholderMapping {
 		newPath = strings.Replace(newPath, placeholder, replacement, -1)
 	}
 	Debug("Processed path: ", newPath)
@@ -92,14 +92,14 @@ func validateAsset(ACIAsset, localAsset string) error {
 	return fmt.Errorf("Can't handle local asset %v - not a file, not a dir", fi.Name())
 }
 
-func PrepareAssets(assets []string, rootfs string, paths map[string]string) error {
+func PrepareAssets(assets []string, rootfs string, placeholderMapping map[string]string) error {
 	for _, asset := range assets {
 		splitAsset := filepath.SplitList(asset)
 		if len(splitAsset) != 2 {
 			return fmt.Errorf("Malformed asset option: '%v' - expected two absolute paths separated with %v", asset, ListSeparator())
 		}
-		ACIAsset := replacePlaceholders(splitAsset[0], paths)
-		localAsset := replacePlaceholders(splitAsset[1], paths)
+		ACIAsset := replacePlaceholders(splitAsset[0], placeholderMapping)
+		localAsset := replacePlaceholders(splitAsset[1], placeholderMapping)
 		if err := validateAsset(ACIAsset, localAsset); err != nil {
 			return err
 		}
