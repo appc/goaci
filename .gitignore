@@ -25,3 +25,7 @@ _testmain.go
 
 bin/
 gopath/
+
+*~
+*.aci
+/goaci
