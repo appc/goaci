@@ -1,0 +1,591 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"flag"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
+	"strings"
+
+	"github.com/appc/spec/aci"
+	"github.com/appc/spec/schema"
+	"github.com/appc/spec/schema/types"
+)
+
+func getPlaceholderMappingFor(projectPath, buildPath, installPath string) map[string]string {
+	return map[string]string{
+		"<PROJPATH>":    projectPath,
+		"<BUILDPATH>":   buildPath,
+		"<INSTALLPATH>": installPath,
+	}
+}
+
+func getEmptyPlaceholderMapping() map[string]string {
+	return getPlaceholderMappingFor("", "", "")
+}
+
+type StringVector []string
+
+func (v *StringVector) String() string {
+	return `"` + strings.Join(*v, `" "`) + `"`
+}
+
+func (v *StringVector) Set(str string) error {
+	*v = append(*v, str)
+	return nil
+}
+
+type options struct {
+	exec            StringVector
+	useBinary       string
+	assets          StringVector
+	keepTmp         bool
+	project         string
+	binDir          string
+	binary          string
+	reuseInstallDir string
+}
+
+func getOptions() (*options, error) {
+	opts := &options{}
+
+	// --exec
+	flag.Var(&opts.exec, "exec", "Parameters passed to app, can be used multiple times")
+
+	// --use-binary
+	flag.StringVar(&opts.useBinary, "use-binary", "", "Which executable to put in ACI image")
+
+	// --asset
+	emptyPlaceholders := getEmptyPlaceholderMapping()
+	placeholders := make([]string, 0, len(emptyPlaceholders))
+	for p := range emptyPlaceholders {
+		placeholders = append(placeholders, p)
+	}
+	sort.Strings(placeholders)
+	flag.Var(&opts.assets, "asset", "Additional assets, can be used multiple times; format: <path in ACI>"+ListSeparator()+"<local path>; available placeholders for use: "+strings.Join(placeholders, ", "))
+
+	// --keep-tmp
+	flag.BoolVar(&opts.keepTmp, "keep-tmp", false, "Do not delete temporary directory used for creating ACI")
+
+	// --binary-dir
+	flag.StringVar(&opts.binDir, "binary-dir", "", "Look for binaries in this directory (relative to install path, eg passing /usr/local/mysql/bin would look for a binary in /tmp/XXX/install/usr/local/mysql/bin")
+
+	// --reuse-install-dir
+	flag.StringVar(&opts.reuseInstallDir, "reuse-install-dir", "", "Instead of downloading a project, building and installing use this path with already installed project")
+	flag.Parse()
+	args := flag.Args()
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Expected exactly one project to build, got %d", len(args))
+	}
+	opts.project = args[0]
+
+	return opts, nil
+}
+
+type pathsAndNames struct {
+	tmpDirPath  string
+	projectPath string
+	buildPath   string
+	installPath string
+	aciDirPath  string
+	rootFSPath  string
+
+	imageFileName string
+	imageACName   string
+}
+
+// getNamesFromProject returns project name, image ACName and ACI
+// filename. Names depend on whether project has several binaries. For
+// project with single binary (github.com/appc/goaci) returned values
+// would be: github.com/appc/goaci, github.com/appc/goaci and
+// goaci.aci. For project with multiple binaries
+// (github.com/appc/spec/...) returned values would be (assuming ace
+// as selected binary): github.com/appc/spec, github.com/appc/spec-ace
+// and spec-ace.aci.
+func getNamesFromProject(opts *options) (string, string, string) {
+	imageACName := opts.project
+	projectName := imageACName
+	base := filepath.Base(imageACName)
+	threeDotsBase := base == "..."
+	if threeDotsBase {
+		imageACName = filepath.Dir(imageACName)
+		projectName = imageACName
+		base = filepath.Base(imageACName)
+		if opts.useBinary != "" {
+			suffix := "-" + opts.useBinary
+			base += suffix
+			imageACName += suffix
+		}
+	}
+
+	return projectName, strings.ToLower(imageACName), base + schema.ACIExtension
+}
+
+func getPathsAndNames(opts *options) (*pathsAndNames, error) {
+	tmpDir, err := ioutil.TempDir("", "cxxaci")
+	if err != nil {
+		return nil, fmt.Errorf("error setting up temporary directory: %v", err)
+	}
+
+	_, imageACName, imageFileName := getNamesFromProject(opts)
+
+	aciDir := filepath.Join(tmpDir, "aci")
+	projectPath := filepath.Join(tmpDir, "src")
+	buildPath := filepath.Join(tmpDir, "build")
+	installPath := filepath.Join(tmpDir, "install")
+
+	return &pathsAndNames{
+		tmpDirPath:  tmpDir,                          // /tmp/XXX
+		projectPath: projectPath,                     // /tmp/XXX/src
+		buildPath:   buildPath,                       // /tmp/XXX/build
+		installPath: installPath,                     // /tmp/XXX/install
+		aciDirPath:  aciDir,                          // /tmp/XXX/aci
+		rootFSPath:  filepath.Join(aciDir, "rootfs"), // /tmp/XXX/aci/rootfs
+
+		imageFileName: imageFileName,
+		imageACName:   imageACName,
+	}, nil
+}
+
+func makeDirectories(opts *options, pathsNames *pathsAndNames) error {
+	// /tmp/XXX already exists, not creating it here
+
+	// /tmp/XXX/src
+	if err := os.Mkdir(pathsNames.projectPath, 0755); err != nil {
+		return err
+	}
+
+	// /tmp/XXX/build
+	if err := os.Mkdir(pathsNames.buildPath, 0755); err != nil {
+		return err
+	}
+
+	if opts.reuseInstallDir == "" {
+		// /tmp/XXX/install
+		if err := os.Mkdir(pathsNames.installPath, 0755); err != nil {
+			return err
+		}
+	}
+
+	// /tmp/XXX/aci
+	if err := os.Mkdir(pathsNames.aciDirPath, 0755); err != nil {
+		return err
+	}
+
+	// /tmp/XXX/aci/rootfs
+	if err := os.Mkdir(pathsNames.rootFSPath, 0755); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type CmdFailedError struct {
+	Err error
+}
+
+func (e CmdFailedError) Error() string {
+	return fmt.Sprintf("CmdFailedError: %s", e.Err.Error())
+}
+
+func runCmdFull(args, env []string, cwd string, stdout, stderr io.Writer) error {
+	if len(args) < 1 {
+		return fmt.Errorf("No args passed to runCmd")
+	}
+	prog, err := exec.LookPath(args[0])
+	if err != nil {
+		return err
+	}
+	cmd := exec.Cmd{
+		Path:   prog,
+		Args:   args,
+		Env:    env,
+		Dir:    cwd,
+		Stdout: stdout,
+		Stderr: stderr,
+	}
+	Debug(`running command: "`, strings.Join(args, `" "`), `"`)
+	if err := cmd.Run(); err != nil {
+		return CmdFailedError{err}
+	}
+	return nil
+}
+
+func runCmd(args, env []string, cwd string) error {
+	return runCmdFull(args, env, cwd, os.Stdout, os.Stderr)
+}
+
+func runShallowGitClone(opts *options, pathsNames *pathsAndNames) error {
+	args := []string{
+		"git",
+		"clone",
+		"--depth=1",
+		fmt.Sprintf("https://%s", opts.project),
+		pathsNames.projectPath,
+	}
+	return runCmd(args, nil, "")
+}
+
+func runCmake(pathsNames *pathsAndNames) error {
+	args := []string{
+		"cmake",
+		pathsNames.projectPath,
+	}
+	return runCmd(args, nil, pathsNames.buildPath)
+}
+
+func runMake(pathsNames *pathsAndNames) error {
+	args := []string{
+		"make",
+		fmt.Sprintf("-j%d", runtime.NumCPU()),
+	}
+	return runCmd(args, nil, pathsNames.buildPath)
+}
+
+func runMakeInstall(pathsNames *pathsAndNames) error {
+	args := []string{
+		"make",
+		"install",
+	}
+	env := append(os.Environ(), "DESTDIR="+pathsNames.installPath)
+	return runCmd(args, env, pathsNames.buildPath)
+}
+
+func buildAndInstall(opts *options, pathsNames *pathsAndNames) error {
+	if opts.reuseInstallDir != "" {
+		fi, err := os.Stat(opts.reuseInstallDir)
+		if err == nil && fi.IsDir() {
+			Debug("  reusing install dir, omitting cloning, building and installing")
+			return nil
+		}
+		Warn("Error stating install dir to reuse, continuing with cloning building and installing")
+	}
+
+	if err := runShallowGitClone(opts, pathsNames); err != nil {
+		return err
+	}
+
+	if err := runCmake(pathsNames); err != nil {
+		return err
+	}
+
+	if err := runMake(pathsNames); err != nil {
+		return err
+	}
+
+	if err := runMakeInstall(pathsNames); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// getBinaryName get a binary name built by go get and selected by
+// --use-binary parameter.
+func getBinaryName(opts *options, binDir string) (string, error) {
+	fi, err := ioutil.ReadDir(binDir)
+	if err != nil {
+		return "", err
+	}
+
+	switch {
+	case len(fi) < 1:
+		return "", fmt.Errorf("No binaries found in gobin.")
+	case len(fi) == 1:
+		name := fi[0].Name()
+		if opts.useBinary != "" && name != opts.useBinary {
+			return "", fmt.Errorf("No such binary found in gobin: %q. There is only %q", opts.useBinary, name)
+		}
+		Debug("found binary: ", name)
+		return name, nil
+	case len(fi) > 1:
+		names := []string{}
+		for _, v := range fi {
+			names = append(names, v.Name())
+		}
+		if opts.useBinary == "" {
+			return "", fmt.Errorf("Found multiple binaries in gobin, but --use-binary option is not used. Please specify which binary to put in ACI. Following binaries are available: %q", strings.Join(names, `", "`))
+		}
+		for _, v := range names {
+			if v == opts.useBinary {
+				return v, nil
+			}
+		}
+		return "", fmt.Errorf("No such binary found in gobin: %q. There are following binaries available: %q", opts.useBinary, strings.Join(names, `", "`))
+	}
+	return "", fmt.Errorf("Reaching this point shouldn't be possible.")
+}
+
+func getBinDir(opts *options, pathsNames *pathsAndNames) (string, error) {
+	if opts.binDir != "" {
+		return filepath.Join(pathsNames.installPath, opts.binDir), nil
+	}
+
+	dirs := []string{
+		"/usr/local/sbin",
+		"/usr/local/bin",
+		"/usr/sbin",
+		"/usr/bin",
+		"/sbin",
+		"/bin",
+	}
+	for _, dir := range dirs {
+		path := filepath.Join(pathsNames.installPath, dir)
+		_, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", err
+		}
+		return path, nil
+	}
+	return "", fmt.Errorf("Could not find any bin directory")
+}
+
+func getSymlinkedAssets(path string) ([]string, error) {
+	assets := []string{}
+	maxLevels := 100
+	levels := maxLevels
+	for {
+		if levels < 1 {
+			return nil, fmt.Errorf("Too many levels of symlinks (>$d)", maxLevels)
+		}
+		asset := fmt.Sprintf("%s%s%s", path, ListSeparator(), path)
+		assets = append(assets, asset)
+		fi, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				break
+			}
+			return nil, err
+		}
+		if fi.Mode()&os.ModeSymlink != os.ModeSymlink {
+			break
+		}
+		symTarget, err := os.Readlink(path)
+		if err != nil {
+			return nil, err
+		}
+		if filepath.IsAbs(symTarget) {
+			path = symTarget
+		} else {
+			path = filepath.Join(filepath.Dir(path), symTarget)
+		}
+		levels--
+	}
+	return assets, nil
+}
+
+func createBinaryAssetsFor(binPath string, pathsNames *pathsAndNames) ([]string, error) {
+	rootBinary := filepath.Join("/", filepath.Base(binPath))
+	assets := []string{
+		fmt.Sprintf("%s%s%s", rootBinary, ListSeparator(), binPath),
+	}
+	buf := new(bytes.Buffer)
+	args := []string{
+		"ldd",
+		binPath,
+	}
+	if err := runCmdFull(args, nil, "", buf, nil); err != nil {
+		if _, ok := err.(CmdFailedError); !ok {
+			return nil, err
+		}
+	} else {
+		re := regexp.MustCompile(`(?m)^\t(?:\S+\s+=>\s+)?(\S+)\s+\([0-9a-fA-Fx]+\)$`)
+		for _, matches := range re.FindAllStringSubmatch(string(buf.Bytes()), -1) {
+			lib := matches[1]
+			if lib == "" {
+				continue
+			}
+			symlinkedAssets, err := getSymlinkedAssets(lib)
+			if err != nil {
+				return nil, err
+			}
+			assets = append(assets, symlinkedAssets...)
+		}
+	}
+
+	return assets, nil
+}
+
+func createBinaryAssets(opts *options, pathsNames *pathsAndNames) error {
+	binDir, err := getBinDir(opts, pathsNames)
+	if err != nil {
+		return err
+	}
+	binary, err := getBinaryName(opts, binDir)
+	if err != nil {
+		return err
+	}
+	opts.binary = binary
+	fullBinPath := filepath.Join(binDir, binary)
+	assets, err := createBinaryAssetsFor(fullBinPath, pathsNames)
+	if err != nil {
+		return err
+	}
+	opts.assets = append(opts.assets, assets...)
+	return nil
+}
+
+func getApp(opts *options) *types.App {
+	exec := []string{filepath.Join("/", opts.binary)}
+	exec = append(exec, opts.exec...)
+
+	return &types.App{
+		Exec:  exec,
+		User:  "0",
+		Group: "0",
+	}
+}
+
+func getVCSLabel(pathsNames *pathsAndNames) (*types.Label, error) {
+	name, value, err := GetVCSInfo(pathsNames.projectPath)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get VCS info: %v", err)
+	}
+	acname, err := types.NewACName(name)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid VCS label: %v", err)
+	}
+	return &types.Label{
+		Name:  *acname,
+		Value: value,
+	}, nil
+}
+
+func prepareManifest(opts *options, pathsNames *pathsAndNames) (*schema.ImageManifest, error) {
+	name, err := types.NewACName(pathsNames.imageACName)
+	// TODO(jonboulle): could this ever actually happen?
+	if err != nil {
+		return nil, err
+	}
+
+	app := getApp(opts)
+
+	vcsLabel, err := getVCSLabel(pathsNames)
+	if err != nil {
+		return nil, err
+	}
+	labels := types.Labels{
+		*vcsLabel,
+	}
+
+	manifest := schema.BlankImageManifest()
+	manifest.Name = *name
+	manifest.App = app
+	manifest.Labels = labels
+	return manifest, nil
+}
+
+func getPlaceholderMapping(pathsNames *pathsAndNames) map[string]string {
+	return getPlaceholderMappingFor(pathsNames.projectPath, pathsNames.buildPath, pathsNames.installPath)
+}
+
+func copyAssets(opts *options, pathsNames *pathsAndNames) error {
+	placeholderMapping := getPlaceholderMapping(pathsNames)
+	if err := PrepareAssets(opts.assets, pathsNames.rootFSPath, placeholderMapping); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeACI(pathsNames *pathsAndNames, manifest *schema.ImageManifest) error {
+	mode := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	of, err := os.OpenFile(pathsNames.imageFileName, mode, 0644)
+	if err != nil {
+		return fmt.Errorf("Error opening output file: %v", err)
+	}
+	defer of.Close()
+
+	gw := gzip.NewWriter(of)
+	defer gw.Close()
+
+	tr := tar.NewWriter(gw)
+	defer tr.Close()
+
+	// FIXME: the files in the tar archive are added with the
+	// wrong uid/gid. The uid/gid of the aci builder leaks in the
+	// tar archive. See: https://github.com/appc/goaci/issues/16
+	iw := aci.NewImageWriter(*manifest, tr)
+	if err := filepath.Walk(pathsNames.aciDirPath, aci.BuildWalker(pathsNames.aciDirPath, iw)); err != nil {
+		return err
+	}
+	if err := iw.Close(); err != nil {
+		return err
+	}
+	Info("Wrote ", of.Name())
+	return nil
+}
+
+func mainWithError() error {
+	InitDebug()
+
+	Debug("Getting options")
+	opts, err := getOptions()
+	if err != nil {
+		return err
+	}
+
+	Debug("Getting paths and names")
+	pathsNames, err := getPathsAndNames(opts)
+	if err != nil {
+		return err
+	}
+
+	if opts.keepTmp {
+		Info(`Preserving temporary directory "`, pathsNames.tmpDirPath, `"`)
+	} else {
+		defer os.RemoveAll(pathsNames.tmpDirPath)
+	}
+
+	Debug("Creating directories")
+	if err := makeDirectories(opts, pathsNames); err != nil {
+		return err
+	}
+
+	Debug("Building and installing")
+	if err := buildAndInstall(opts, pathsNames); err != nil {
+		return err
+	}
+
+	Debug("Creating assets")
+	if err := createBinaryAssets(opts, pathsNames); err != nil {
+		return err
+	}
+	fmt.Printf("paths and names: %+v\noptions: %+v\n", pathsNames, opts)
+
+	Debug("Preparing manifest")
+	manifest, err := prepareManifest(opts, pathsNames)
+	if err != nil {
+		return err
+	}
+
+	Debug("Copying assets")
+	if err := copyAssets(opts, pathsNames); err != nil {
+		return err
+	}
+
+	Debug("Writing ACI")
+	if err := writeACI(pathsNames, manifest); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	if err := mainWithError(); err != nil {
+		Warn(err)
+		os.Exit(1)
+	}
+}
