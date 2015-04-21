@@ -89,14 +89,17 @@ func (custom *CmakeCustomizations) PrepareProject() error {
 		}
 	}
 
+	Info("Running cmake")
 	if err := custom.runCmake(); err != nil {
 		return err
 	}
 
+	Info("Running make")
 	if err := custom.runMake(); err != nil {
 		return err
 	}
 
+	Info("Running make install")
 	if err := custom.runMakeInstall(); err != nil {
 		return err
 	}
@@ -105,7 +108,7 @@ func (custom *CmakeCustomizations) PrepareProject() error {
 }
 
 func (custom *CmakeCustomizations) createRepo() error {
-	Debug("Downloading ", custom.Configuration.Project)
+	Info(fmt.Sprintf("Downloading %s", custom.Configuration.Project))
 	repo, err := vcs.RepoRootForImportPath(custom.Configuration.Project, false)
 	if err != nil {
 		return err

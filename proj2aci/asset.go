@@ -183,7 +183,7 @@ func copySymlink(src, dest string) error {
 // man ldd says that running ldd on untrusted executables is dangerous
 // (it might run an executable to get the libraries), so possibly this
 // should be replaced with objdump. Problem with objdump is that it
-// just gives library names, while ldd absolute paths to those
+// just gives library names, while ldd gives absolute paths to those
 // libraries - to use objdump we need to know the $libdir.
 func getSoLibs(path string) ([]string, error) {
 	assets := []string{}
@@ -197,7 +197,7 @@ func getSoLibs(path string) ([]string, error) {
 			return nil, err
 		}
 	} else {
-		re := regexp.MustCompile(`(?m)^\t(?:\S+\s+=>\s+)?(\S+)\s+\([0-9a-fA-Fx]+\)$`)
+		re := regexp.MustCompile(`(?m)^\t(?:\S+\s+=>\s+)?(\/)\s+\([0-9a-fA-Fx]+\)$`)
 		for _, matches := range re.FindAllStringSubmatch(string(buf.Bytes()), -1) {
 			lib := matches[1]
 			if lib == "" {
@@ -224,15 +224,12 @@ func getSymlinkedAssets(path string) ([]string, error) {
 		if levels < 1 {
 			return nil, fmt.Errorf("Too many levels of symlinks (>$d)", maxLevels)
 		}
-		asset := getAssetString(path, path)
-		assets = append(assets, asset)
 		fi, err := os.Lstat(path)
 		if err != nil {
-			if os.IsNotExist(err) {
-				break
-			}
 			return nil, err
 		}
+		asset := getAssetString(path, path)
+		assets = append(assets, asset)
 		if !isSymlink(fi.Mode()) {
 			break
 		}

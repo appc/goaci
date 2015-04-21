@@ -63,8 +63,9 @@ type Builder struct {
 
 func NewBuilder(custom BuilderCustomizations) *Builder {
 	return &Builder{
-		custom:    custom,
+		manifest:  nil,
 		aciBinDir: "/",
+		custom:    custom,
 	}
 }
 
@@ -73,10 +74,12 @@ func (cmd *Builder) Name() string {
 }
 
 func (cmd *Builder) Run() error {
+	Info("Validating builder configuration")
 	if err := cmd.validateConfiguration(); err != nil {
 		return err
 	}
 
+	Info("Setting up paths")
 	if err := cmd.setupPaths(); err != nil {
 		return err
 	}
@@ -84,41 +87,50 @@ func (cmd *Builder) Run() error {
 	config := cmd.custom.GetCommonConfiguration()
 	paths := cmd.custom.GetCommonPaths()
 	if config.KeepTmpDir {
-		Info(`Preserving temporary directory "`, paths.TmpDir, `"`)
+		Info(fmt.Sprintf("Preserving temporary directory %q", paths.TmpDir))
 	} else {
 		defer os.RemoveAll(paths.TmpDir)
 	}
 
 	if config.ReuseTmpDir != "" {
+		Info("Reusing temporary directory")
+		Info("Deleting old ACI contents")
 		if err := os.RemoveAll(paths.AciDir); err != nil {
 			return err
 		}
 
+		Info("Creating directories")
 		if err := cmd.makeDirectories(); err != nil {
 			return err
 		}
 	} else {
+		Info("Creating directories")
 		if err := cmd.makeDirectories(); err != nil {
 			return err
 		}
 
+		Info("Preparing a project")
 		if err := cmd.prepareProject(); err != nil {
 			return err
 		}
 	}
 
+	Info("Copying assets to ACI directory")
 	if err := cmd.copyAssets(); err != nil {
 		return err
 	}
 
+	Info("Preparing manifest")
 	if err := cmd.prepareManifest(); err != nil {
 		return err
 	}
 
-	if err := cmd.writeACI(); err != nil {
+	Info("Writing ACI")
+	if name, err := cmd.writeACI(); err != nil {
 		return err
+	} else {
+		Info(fmt.Sprintf("Done, wrote %q", name))
 	}
-
 	return nil
 }
 
@@ -320,15 +332,15 @@ func (cmd *Builder) getVCSLabel() (*types.Label, error) {
 	}, nil
 }
 
-func (cmd *Builder) writeACI() error {
+func (cmd *Builder) writeACI() (string, error) {
 	mode := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
 	filename, err := cmd.custom.GetImageFileName()
 	if err != nil {
-		return err
+		return "", err
 	}
 	of, err := os.OpenFile(filename, mode, 0644)
 	if err != nil {
-		return fmt.Errorf("Error opening output file: %v", err)
+		return "", fmt.Errorf("Error opening output file: %v", err)
 	}
 	defer of.Close()
 
@@ -344,11 +356,10 @@ func (cmd *Builder) writeACI() error {
 	iw := aci.NewImageWriter(*cmd.manifest, tr)
 	paths := cmd.custom.GetCommonPaths()
 	if err := filepath.Walk(paths.AciDir, aci.BuildWalker(paths.AciDir, iw)); err != nil {
-		return err
+		return "", err
 	}
 	if err := iw.Close(); err != nil {
-		return err
+		return "", err
 	}
-	Info("Wrote ", of.Name())
-	return nil
+	return of.Name(), nil
 }

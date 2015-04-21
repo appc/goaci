@@ -37,7 +37,7 @@ func mainWithError() error {
 	if len(os.Args) < 2 {
 		return newCmdLineError("No command specified")
 	}
-	if c, ok := commandsHash[os.Args[1]]; ok {
+	if c, ok := commandsMap[os.Args[1]]; ok {
 		name := fmt.Sprintf("%s %s", os.Args[0], os.Args[1])
 		return c.Run(name, os.Args[2:])
 	} else {
@@ -47,8 +47,8 @@ func mainWithError() error {
 
 func printUsage() {
 	fmt.Println("Available commands:")
-	commands := make([]string, 0, len(commandsHash))
-	for c := range commandsHash {
+	commands := make([]string, 0, len(commandsMap))
+	for c := range commandsMap {
 		commands = append(commands, c)
 	}
 	sort.Strings(commands)

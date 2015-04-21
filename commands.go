@@ -1,7 +1,7 @@
 package main
 
 var (
-	commandsHash map[string]command = make(map[string]command)
+	commandsMap map[string]command = make(map[string]command)
 )
 
 func init() {
@@ -10,6 +10,6 @@ func init() {
 		newBuilderCommand(newCmakeParameterMapper()),
 	}
 	for _, c := range commands {
-		commandsHash[c.Name()] = c
+		commandsMap[c.Name()] = c
 	}
 }

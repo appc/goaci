@@ -97,6 +97,7 @@ func (custom *GoCustomizations) GetDirectoriesToMake() []string {
 }
 
 func (custom *GoCustomizations) PrepareProject() error {
+	Info("Running go get")
 	// Construct args for a go get that does a static build
 	args := []string{
 		"go",

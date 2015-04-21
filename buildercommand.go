@@ -18,7 +18,7 @@ type parameterMapper interface {
 
 // builderCommand is an implementation of command interface which
 // mainly maps command line parameters to proj2aci.Builder's
-// configuration and run the builder.
+// configuration and runs the builder.
 type builderCommand struct {
 	mapper parameterMapper
 }
