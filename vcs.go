@@ -5,17 +5,23 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
 
 func repoDirExists(projPath, repoDir string) bool {
-	path := filepath.Join(projPath, repoDir)
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
+	for ; projPath != path.Dir(projPath); projPath = path.Dir(projPath) {
+		path := filepath.Join(projPath, repoDir)
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			return true
+		}
 	}
-	return info.IsDir()
+	return false
 }
 
 // getId gets first line of commands output which should hold some VCS
