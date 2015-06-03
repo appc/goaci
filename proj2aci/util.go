@@ -1,4 +1,4 @@
-package main
+package proj2aci
 
 import (
 	"fmt"
@@ -11,6 +11,21 @@ import (
 
 var debugEnabled bool
 var pathListSep string
+
+// DirExists checks if directory exists if given path is not empty.
+//
+// This function is rather specific as it is mostly used for checking
+// overrides validity (like overriding temporary directory, where
+// empty string means "do not override").
+func DirExists(path string) bool {
+	if path != "" {
+		fi, err := os.Stat(path)
+		if err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
+}
 
 func printTo(w io.Writer, i ...interface{}) {
 	s := fmt.Sprint(i...)
@@ -37,8 +52,8 @@ func InitDebug() {
 	}
 }
 
-// ListSeparator returns filepath.ListSeparator rune as a string.
-func ListSeparator() string {
+// listSeparator returns filepath.ListSeparator rune as a string.
+func listSeparator() string {
 	if pathListSep == "" {
 		len := utf8.RuneLen(filepath.ListSeparator)
 		if len < 0 {

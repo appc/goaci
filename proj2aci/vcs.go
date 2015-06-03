@@ -1,4 +1,4 @@
-package main
+package proj2aci
 
 import (
 	"bytes"
