@@ -197,7 +197,7 @@ func getSoLibs(path string) ([]string, error) {
 			return nil, err
 		}
 	} else {
-		re := regexp.MustCompile(`(?m)^\t(?:\S+\s+=>\s+)?(\/)\s+\([0-9a-fA-Fx]+\)$`)
+		re := regexp.MustCompile(`(?m)^\t(?:\S+\s+=>\s+)?(\/\S+)\s+\([0-9a-fA-Fx]+\)$`)
 		for _, matches := range re.FindAllStringSubmatch(string(buf.Bytes()), -1) {
 			lib := matches[1]
 			if lib == "" {
