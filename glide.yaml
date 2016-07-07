@@ -1,0 +1,11 @@
+package: github.com/appc/goaci
+import:
+- package: github.com/appc/spec
+  version: ~0.8.4
+  subpackages:
+  - aci
+  - schema
+  - schema/types
+- package: golang.org/x/tools
+  subpackages:
+  - go/vcs
